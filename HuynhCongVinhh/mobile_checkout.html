@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Thanh toán - Quét mã</title>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;background:#f6f7fb;margin:0;padding:16px}
+    .card{max-width:520px;margin:12px auto;background:#fff;padding:16px;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+    h2{margin:0 0 8px;font-size:20px}
+    label{font-size:13px;color:#444}
+    input[type=number],input[type=text]{width:100%;padding:10px;margin:8px 0 12px;border:1px solid #ddd;border-radius:6px;font-size:16px}
+    button{width:100%;padding:12px;border:0;border-radius:8px;background:#1b714f;color:#fff;font-size:16px}
+    .btn-secondary{background:#6c757d}
+    .bill{margin-top:12px;border-top:1px dashed #e5e7eb;padding-top:12px}
+    .row{display:flex;justify-content:space-between;margin:6px 0}
+    .muted{color:#666;font-size:13px}
+    .small{font-size:13px;color:#555}
+    a.link{color:#1b714f;text-decoration:none}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Thanh toán nhanh</h2>
+    <p class="muted">Mở từ mã QR? Trang này cho phép bạn nhập số tiền và thanh toán giả lập.</p>
+
+    <label>Payment ID</label>
+    <input id="paymentId" type="text" readonly />
+
+    <label>Tên người nhận</label>
+    <input id="merchant" type="text" placeholder="Tên cửa hàng (tùy chọn)" />
+
+    <label>Số tiền (VND)</label>
+    <input id="amount" type="number" min="0" placeholder="Nhập số tiền" />
+
+    <button id="payBtn">Thanh toán</button>
+    <div style="height:8px"></div>
+    <button id="cancelBtn" class="btn-secondary">Hủy</button>
+
+    <div id="bill" class="bill" style="display:none">
+      <h3>Hóa đơn</h3>
+      <div class="row"><div class="small">Mã giao dịch</div><div id="txId" class="small"></div></div>
+      <div class="row"><div class="small">Payment ID</div><div id="pid" class="small"></div></div>
+      <div class="row"><div class="small">Người nhận</div><div id="mname" class="small"></div></div>
+      <div class="row"><div class="small">Số tiền</div><div id="amt" class="small"></div></div>
+      <div class="row"><div class="small">Thời gian</div><div id="time" class="small"></div></div>
+      <div style="margin-top:10px">
+        <button id="printBtn">In hóa đơn</button>
+        <div style="height:8px"></div>
+        <button id="returnBtn" class="btn-secondary">Gửi về trang bán hàng</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function vnd(n){if(!n) return '0 đ'; return parseInt(n).toLocaleString('vi-VN') + ' đ'}
+    const params = new URLSearchParams(location.search)
+    const pid = params.get('paymentId') || ('p'+Date.now().toString(36))
+    const preAmount = params.get('amount') || ''
+    const returnUrl = params.get('returnUrl') || ''
+
+    document.getElementById('paymentId').value = pid
+    if(preAmount) document.getElementById('amount').value = preAmount
+
+    document.getElementById('cancelBtn').addEventListener('click', ()=>{ history.back() })
+
+    document.getElementById('payBtn').addEventListener('click', ()=>{
+      const amount = document.getElementById('amount').value
+      const merchant = document.getElementById('merchant').value || 'Cửa hàng'
+      if(!amount || parseInt(amount) <= 0){ alert('Vui lòng nhập số tiền hợp lệ'); return }
+
+      const tx = 'T' + Date.now().toString(36)
+      const now = new Date()
+
+      document.getElementById('txId').textContent = tx
+      document.getElementById('pid').textContent = pid
+      document.getElementById('mname').textContent = merchant
+      document.getElementById('amt').textContent = vnd(amount)
+      document.getElementById('time').textContent = now.toLocaleString()
+      document.getElementById('bill').style.display = 'block'
+
+      // If there's a returnUrl, provide a button to redirect with success
+      const returnBtn = document.getElementById('returnBtn')
+      if(returnUrl){
+        returnBtn.style.display = 'block'
+        returnBtn.onclick = ()=>{
+          const sep = returnUrl.includes('?') ? '&' : '?'
+          const url = returnUrl + sep + 'status=success&paymentId=' + encodeURIComponent(pid) + '&tx=' + encodeURIComponent(tx) + '&time=' + Date.now()
+          location.href = url
+        }
+      } else {
+        returnBtn.style.display = 'none'
+      }
+    })
+
+    document.getElementById('printBtn').addEventListener('click', ()=>{
+      window.print()
+    })
+  </script>
+</body>
+</html>
