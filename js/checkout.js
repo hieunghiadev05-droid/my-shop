@@ -1,7 +1,38 @@
 const PHIVANCHUYEN = 30000;
 let priceFinal = document.getElementById("checkout-cart-price-final");
+let currentCheckoutOption = 1;
+let currentCheckoutProduct = null;
+// Listen for payment success messages from other tabs/windows (same browser)
+if (typeof BroadcastChannel !== 'undefined') {
+    try {
+        const paymentChannel = new BroadcastChannel('cvshop_payments');
+        paymentChannel.onmessage = (e) => {
+            const data = e.data || {};
+            if (data.type === 'payment_success') {
+                // Clear current user's cart and update storage
+                const currentUser = JSON.parse(localStorage.getItem('currentuser') || '{}');
+                if (currentUser && Array.isArray(currentUser.cart) && currentUser.cart.length > 0) {
+                    currentUser.cart.length = 0;
+                    localStorage.setItem('currentuser', JSON.stringify(currentUser));
+                }
+                // Optional UI feedback: toast and navigate to order history
+                if (typeof toast === 'function') {
+                    toast({ title: 'Thanh toán', message: 'Thanh toán thành công. Giỏ hàng đã được cập nhật.', type: 'success', duration: 3000 });
+                }
+                // If on checkout page, redirect to order history section
+                if (location.pathname.endsWith('index.html') || location.pathname.endsWith('/') ) {
+                    setTimeout(() => { location.href = 'index.html#order-history'; }, 1200);
+                }
+            }
+        }
+    } catch (err) {
+        console.warn('BroadcastChannel not available', err);
+    }
+}
 // Trang thanh toan
 function thanhtoanpage(option, product) {
+    currentCheckoutOption = option;
+    currentCheckoutProduct = product || null;
     // Xu ly ngay nhan hang
     let today = new Date();
     let ngaymai = new Date();
@@ -199,10 +230,28 @@ if (onlineCheckoutBtn) {
             amount = getCartTotal() + PHIVANCHUYEN;
         }
 
-        // Sinh paymentId và chuyển hướng tới page tạo QR
         const paymentId = 'p' + Date.now().toString(36);
+        const currentUserPhone = JSON.parse(localStorage.getItem('currentuser') || '{}').phone || '';
+        const orderData = {
+            paymentId,
+            option: currentCheckoutOption,
+            khachhang: currentUserPhone,
+            product: currentCheckoutProduct,
+            cart: currentCheckoutOption === 1 ? JSON.parse(JSON.stringify(JSON.parse(localStorage.getItem('currentuser') || '{}').cart || [])) : null,
+            tennguoinhan,
+            sdtnhan,
+            diachinhan,
+            hinhthucgiao: document.querySelector('#giaotannoi').classList.contains('active') ? document.querySelector('#giaotannoi').innerText : document.querySelector('#tudenlay').innerText,
+            thoigiangiao: document.querySelector('#giaongay').checked ? 'Giao ngay khi xong' : document.querySelector('.choise-time') ? document.querySelector('.choise-time').value : '',
+            ngaygiaohang: document.querySelector('.pick-date.active') ? document.querySelector('.pick-date.active').getAttribute('data-date') : '',
+            ghichu: document.querySelector('.note-order').value || '',
+        };
+
+        const pendingPaymentOrder = orderData;
+        localStorage.setItem('pendingPaymentOrder', JSON.stringify(pendingPaymentOrder));
+
         const base = location.href.replace(/[^\/]*$/, '');
-        const returnUrl = base + 'payment-success.html?paymentId=' + paymentId;
+        const returnUrl = base + 'payment-success.html?paymentId=' + paymentId + '&orderData=' + encodeURIComponent(JSON.stringify(orderData));
         const qrUrl = base + 'payment-qr.html?paymentId=' + paymentId + '&amount=' + encodeURIComponent(amount) + '&returnUrl=' + encodeURIComponent(returnUrl);
         // Chuyển sang trang tạo QR (mở trong cùng tab)
         window.location.href = qrUrl;
@@ -322,10 +371,9 @@ function xulyDathang(product) {
         localStorage.setItem("order", JSON.stringify(order));
         localStorage.setItem("currentuser", JSON.stringify(currentUser));
         localStorage.setItem("orderDetails", JSON.stringify(orderDetails));
-        toast({ title: 'Thành công', message: 'Đặt hàng thành công !', type: 'success', duration: 1000 });
-        setTimeout((e) => {
-            window.location = "/";
-        }, 2000);
+        // Hiển thị thông báo, xóa giỏ hàng và điều hướng
+        // handlePaymentSuccess sẽ tự show toast, clear cart và redirect
+        handlePaymentSuccess('index.html#order-history');
     }
 }
 
@@ -335,4 +383,91 @@ function getpriceProduct(id) {
         return item.id == id;
     })
     return sp.price;
+}
+
+// -------------------------
+// Thanh toán: clear/notify/redirect helpers
+// -------------------------
+// Xóa giỏ hàng khỏi localStorage (hỗ trợ cả key `cart` và `currentuser.cart`)
+function clearCartLocalStorage() {
+    try {
+        // Nếu có key 'cart' (ví dụ implementations khác) thì xóa
+        localStorage.removeItem('cart');
+    } catch (e) {
+        console.warn('clear cart key failed', e);
+    }
+
+    try {
+        // Nếu lưu giỏ hàng trong currentuser.cart thì xóa mảng
+        const cuRaw = localStorage.getItem('currentuser');
+        if (cuRaw) {
+            const cu = JSON.parse(cuRaw);
+            if (cu && Array.isArray(cu.cart) && cu.cart.length > 0) {
+                cu.cart.length = 0;
+                localStorage.setItem('currentuser', JSON.stringify(cu));
+            }
+        }
+    } catch (e) {
+        console.warn('clear currentuser.cart failed', e);
+    }
+}
+
+// Cập nhật giao diện giỏ hàng sau khi xóa (đơn giản, rõ ràng)
+function updateCartUI() {
+    // Danh sách đơn hàng trên trang checkout
+    const listOrder = document.getElementById('list-order-checkout');
+    if (listOrder) {
+        listOrder.innerHTML = '<div class="empty-cart">Giỏ hàng trống</div>';
+    }
+
+    // Hiển thị tổng tiền là 0
+    const priceFinalEl = document.getElementById('checkout-cart-price-final');
+    if (priceFinalEl) {
+        priceFinalEl.innerText = '0 đ';
+    }
+
+    // Nếu có bộ đếm số lượng ở header hoặc icon, cố gắng cập nhật (tự chịu biến tên)
+    try {
+        const cartCountEls = document.querySelectorAll('.cart-count');
+        cartCountEls.forEach(el => el.textContent = '0');
+    } catch (e) { /* ignore */ }
+}
+
+// Thông báo thành công + очистка giỏ hàng + redirect
+// redirectUrl (optional) — nếu không truyền thì chuyển về `index.html#order-history`
+function handlePaymentSuccess(redirectUrl) {
+    // Hiển thị toast nếu có hàm `toast`, nếu không dùng alert
+    if (typeof toast === 'function') {
+        toast({ title: 'Thanh toán', message: 'Thanh toán thành công', type: 'success', duration: 2000 });
+    } else {
+        alert('Thanh toán thành công');
+    }
+
+    // Xóa dữ liệu giỏ hàng
+    clearCartLocalStorage();
+
+    // Cập nhật giao diện ngay lập tức
+    updateCartUI();
+
+    // Gửi sự kiện broadcast để các tab khác có thể cập nhật giao diện
+    try {
+        if (typeof BroadcastChannel !== 'undefined') {
+            const bc = new BroadcastChannel('cvshop_payments');
+            bc.postMessage({ type: 'payment_success' });
+            bc.close();
+        } else {
+            // Fallback: ghi vào localStorage để trigger event 'storage' trên các tab khác
+            const evt = { payment: true, time: Date.now() };
+            localStorage.setItem('cvshop_payment_event', JSON.stringify(evt));
+            setTimeout(() => { localStorage.removeItem('cvshop_payment_event'); }, 2000);
+        }
+    } catch (e) {
+        console.warn('broadcast payment event failed', e);
+    }
+
+    // Redirect sau 1.2s để người dùng kịp thấy thông báo
+    setTimeout(() => {
+        if (redirectUrl) location.href = redirectUrl;
+        else location.href = 'index.html#order-history';
+    }, 1200);
 }

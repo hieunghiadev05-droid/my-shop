@@ -121,7 +121,11 @@ function animationCart() {
 
 // Them SP vao gio hang
 function addCart(index) {
-    let currentuser = localStorage.getItem('currentuser') ? JSON.parse(localStorage.getItem('currentuser')) : [];
+    let currentuser = localStorage.getItem('currentuser') ? JSON.parse(localStorage.getItem('currentuser')) : null;
+    if (!currentuser || typeof currentuser !== 'object') {
+        currentuser = { cart: [] };
+    }
+    if (!Array.isArray(currentuser.cart)) currentuser.cart = [];
     let soluong = document.querySelector('.input-qty').value;
     let popupDetailNote = document.querySelector('#popup-detail-note').value;
     let note = popupDetailNote == "" ? "Không có ghi chú" : popupDetailNote;
@@ -198,7 +202,8 @@ function deleteCartItem(id, el) {
     let cartParent = el.parentNode.parentNode;
     cartParent.remove();
     let currentUser = JSON.parse(localStorage.getItem('currentuser'));
-    let vitri = currentUser.cart.findIndex(item => item.id = id)
+    if (!currentUser || !Array.isArray(currentUser.cart)) currentUser = { cart: [] };
+    let vitri = currentUser.cart.findIndex(item => item.id == id)
     currentUser.cart.splice(vitri, 1);
 
     // Nếu trống thì hiển thị giỏ hàng trống
@@ -220,10 +225,12 @@ function getCartTotal() {
     let currentUser = JSON.parse(localStorage.getItem('currentuser'));
     let tongtien = 0;
     if (currentUser != null) {
-        currentUser.cart.forEach(item => {
-            let product = getProduct(item);
-            tongtien += (parseInt(product.soluong) * parseInt(product.price));
-        });
+        if (Array.isArray(currentUser.cart)) {
+            currentUser.cart.forEach(item => {
+                let product = getProduct(item);
+                tongtien += (parseInt(product.soluong) * parseInt(product.price));
+            });
+        }
     }
     return tongtien;
 }
@@ -245,11 +252,13 @@ window.onload = updateCartTotal();
 // Lay so luong hang
 
 function getAmountCart() {
-    let currentuser = JSON.parse(localStorage.getItem('currentuser'))
+    let currentuser = JSON.parse(localStorage.getItem('currentuser') || '{}')
     let amount = 0;
-    currentuser.cart.forEach(element => {
-        amount += parseInt(element.soluong);
-    });
+    if (currentuser && Array.isArray(currentuser.cart)) {
+        currentuser.cart.forEach(element => {
+            amount += parseInt(element.soluong) || 0;
+        });
+    }
     return amount;
 }
 
@@ -257,7 +266,8 @@ function getAmountCart() {
 function updateAmount() {
     if (localStorage.getItem('currentuser') != null) {
         let amount = getAmountCart();
-        document.querySelector('.count-product-cart').innerText = amount;
+        const el = document.querySelector('.count-product-cart');
+        if (el) el.innerText = amount;
     }
 }
 
@@ -318,6 +328,49 @@ function openSearchMb() {
         liItem[i].style.setProperty("display", "none", "important")
     }
 }
+
+// Listen for localStorage changes from other tabs (e.g., payment success updating currentuser)
+window.addEventListener('storage', (e) => {
+    try {
+        if (e.key === 'currentuser') {
+            // Update cart amount and contents
+            updateAmount();
+            updateCartTotal();
+            // If cart modal open, re-render it
+            const modalCart = document.querySelector('.modal-cart');
+            if (modalCart && modalCart.classList.contains('open')) {
+                showCart();
+            }
+        }
+        // If orders changed, you could refresh order list in relevant pages
+        if (e.key === 'order' || e.key === 'orderDetails') {
+            if (typeof renderOrderProduct === 'function') renderOrderProduct();
+        }
+        // Fallback event from payment-success (cross-tab trigger)
+        if (e.key === 'cvshop_payment_event') {
+            try {
+                const data = JSON.parse(e.newValue || '{}');
+                if (data && data.paymentId) {
+                    // Clear cart UI and storage
+                    const currentUser = JSON.parse(localStorage.getItem('currentuser') || '{}');
+                    if (currentUser && Array.isArray(currentUser.cart) && currentUser.cart.length > 0) {
+                        currentUser.cart.length = 0;
+                        localStorage.setItem('currentuser', JSON.stringify(currentUser));
+                    }
+                    updateAmount();
+                    updateCartTotal();
+                    if (typeof toast === 'function') toast({ title: 'Thanh toán', message: 'Thanh toán thành công. Giỏ hàng đã được cập nhật.', type: 'success', duration: 3000 });
+                    // navigate to order history if on index
+                    if (location.pathname.endsWith('index.html') || location.pathname.endsWith('/')) {
+                        setTimeout(() => { location.href = 'index.html#order-history'; }, 1000);
+                    }
+                }
+            } catch (err) { console.warn('cvshop_payment_event parse error', err); }
+        }
+    } catch (err) {
+        console.warn('storage event handler error', err);
+    }
+});
 
 //Close Search Mobile 
 function closeSearchMb() {

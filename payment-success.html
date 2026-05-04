@@ -15,16 +15,159 @@
   <div class="card">
     <h2 class="ok">Thanh toán thành công</h2>
     <div id="details"></div>
-    <a class="button" href="payment-qr.html">Quay về trang thanh toán</a>
-  </div>
+      <a class="button" href="index.html#order-history">Xem đơn hàng</a>
+    function createId(arr) {
+      let id = arr.length + 1;
+      let check = arr.find(item => item.id == 'DH' + id);
+      while (check != null) {
+        id++;
+        check = arr.find(item => item.id == 'DH' + id);
+      }
+      return 'DH' + id;
+    }
 
-  <script>
-    const p = new URLSearchParams(location.search)
-    const status = p.get('status') || 'unknown'
-    const id = p.get('paymentId') || ''
-    const time = p.get('time') ? new Date(Number(p.get('time'))) : null
-    const d = document.getElementById('details')
-    d.innerHTML = '<p><strong>Payment ID:</strong> ' + id + '</p><p><strong>Trạng thái:</strong> ' + status + '</p>' + (time?('<p><strong>Thời gian:</strong> ' + time + '</p>'):'')
+    function getProductPrice(id) {
+      const products = JSON.parse(localStorage.getItem('products') || '[]');
+      const product = products.find(item => item.id == id);
+      return product ? product.price : 0;
+    }
+
+    function getProductTitle(id) {
+      const products = JSON.parse(localStorage.getItem('products') || '[]');
+      const product = products.find(item => item.id == id);
+      return product ? product.title : 'Sản phẩm';
+    }
+
+    function vnd(n) {
+      return parseInt(n || 0).toLocaleString('vi-VN') + ' đ';
+    }
+
+    function renderItems(items) {
+      if (!items || !items.length) return '';
+      return '<div style="margin-top:16px;padding:14px;border:1px solid #e0e0e0;border-radius:10px;background:#fafafa;">' +
+        '<h3 style="margin-top:0;">Chi tiết đơn hàng</h3>' +
+        items.map(item => {
+          const title = getProductTitle(item.id);
+          const priceText = item.price ? vnd(item.price) : '';
+          return '<div style="margin-bottom:10px;line-height:1.5;">' +
+            '<strong>' + title + '</strong><br>' +
+            'Số lượng: ' + item.soluong + '<br>' +
+            (priceText ? ('Giá: ' + priceText + '<br>') : '') +
+            (item.note ? ('Ghi chú: ' + item.note + '<br>') : '') +
+            '</div>';
+        }).join('') +
+        '</div>';
+    }
+
+    const p = new URLSearchParams(location.search);
+    const status = p.get('status') || 'unknown';
+    const id = p.get('paymentId') || '';
+    const time = p.get('time') ? new Date(Number(p.get('time'))) : null;
+    const d = document.getElementById('details');
+
+    let detailsHtml = '<p><strong>Payment ID:</strong> ' + id + '</p>' +
+      '<p><strong>Trạng thái:</strong> ' + status + '</p>' +
+      (time ? ('<p><strong>Thời gian:</strong> ' + time + '</p>') : '');
+
+    function parseOrderData(value) {
+      try {
+        return JSON.parse(decodeURIComponent(value));
+      } catch (error) {
+        return null;
+      }
+    }
+
+    if (status === 'success') {
+      const urlOrderData = p.get('orderData') ? parseOrderData(p.get('orderData')) : null;
+      const pending = urlOrderData || JSON.parse(localStorage.getItem('pendingPaymentOrder') || 'null');
+      if (pending && pending.paymentId === id) {
+        const currentUser = JSON.parse(localStorage.getItem('currentuser') || '{}');
+        const orderDetails = JSON.parse(localStorage.getItem('orderDetails') || '[]');
+        const order = JSON.parse(localStorage.getItem('order') || '[]');
+
+        let tongtien = 0;
+        let items = [];
+        if (pending.option === 1 && Array.isArray(pending.cart)) {
+          pending.cart.forEach(item => {
+            item.madon = createId(order);
+            item.price = getProductPrice(item.id) || item.price || 0;
+            tongtien += item.price * item.soluong;
+            orderDetails.push(item);
+          });
+          if (currentUser.cart) currentUser.cart.length = 0;
+          items = pending.cart;
+        } else if (pending.option === 2 && pending.product) {
+          const product = pending.product;
+          product.madon = createId(order);
+          product.price = getProductPrice(product.id) || product.price || 0;
+          tongtien += product.price * product.soluong;
+          orderDetails.push(product);
+          items = [product];
+        }
+
+        const donhang = {
+          id: createId(order),
+          khachhang: currentUser.phone || pending.khachhang || '',
+          hinhthucgiao: pending.hinhthucgiao || '',
+          ngaygiaohang: pending.ngaygiaohang || '',
+          thoigiangiao: pending.thoigiangiao || '',
+          ghichu: pending.ghichu || '',
+          tenguoinhan: pending.tennguoinhan || '',
+          sdtnhan: pending.sdtnhan || '',
+          diachinhan: pending.diachinhan || '',
+          thoigiandat: new Date().toISOString(),
+          tongtien: tongtien,
+          trangthai: 1
+        };
+
+        order.unshift(donhang);
+        localStorage.setItem('order', JSON.stringify(order));
+        localStorage.setItem('orderDetails', JSON.stringify(orderDetails));
+        localStorage.setItem('currentuser', JSON.stringify(currentUser));
+        // Remove generic 'cart' key too in case other pages store cart separately
+        try { localStorage.removeItem('cart'); } catch (e) { /* ignore */ }
+        localStorage.removeItem('pendingPaymentOrder');
+
+        // Broadcast payment success to other tabs/windows in same browser
+        try {
+          if (typeof BroadcastChannel !== 'undefined') {
+            const bc = new BroadcastChannel('cvshop_payments');
+            bc.postMessage({ type: 'payment_success', paymentId: id, orderId: donhang.id });
+            bc.close();
+          }
+        } catch (err) {
+          console.warn('BroadcastChannel post failed', err);
+        }
+
+        // Fallback: write a dedicated storage key to trigger `storage` event in other tabs
+        try {
+          const evt = { paymentId: id, orderId: donhang.id, time: Date.now() };
+          localStorage.setItem('cvshop_payment_event', JSON.stringify(evt));
+          // keep it briefly so other tabs can read it, then remove
+          setTimeout(() => { localStorage.removeItem('cvshop_payment_event'); }, 2000);
+        } catch (err) {
+          console.warn('fallback storage event failed', err);
+        }
+
+        detailsHtml += '<p style="color:green;font-weight:600;">Đơn hàng đã được duyệt và tạo thành công.</p>';
+        detailsHtml += '<p><strong>Mã đơn:</strong> ' + donhang.id + '</p>';
+        detailsHtml += '<p><strong>Tên người nhận:</strong> ' + donhang.tenguoinhan + '</p>';
+        detailsHtml += '<p><strong>Địa chỉ:</strong> ' + donhang.diachinhan + '</p>';
+        detailsHtml += '<p><strong>Tổng tiền:</strong> ' + vnd(donhang.tongtien) + '</p>';
+        detailsHtml += renderItems(items);
+      } else {
+        detailsHtml += '<p style="color:orange;">Không tìm thấy đơn hàng chờ thanh toán hoặc đơn đã được xử lý trước đó.</p>';
+      }
+    }
+
+    d.innerHTML = detailsHtml;
+
+    // Nếu trạng thái là success, tự động điều hướng về trang lịch sử đơn hàng sau 3 giây
+    if (status === 'success') {
+      setTimeout(() => {
+        location.href = 'index.html#order-history';
+      }, 3000);
+    }
   </script>
 </body>
 </html>
